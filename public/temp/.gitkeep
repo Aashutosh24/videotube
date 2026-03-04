@@ -1,0 +1,1 @@
+this file can be empty, this file allows us to push even empty folder to git if we want to if the folder is empty and also doesn't contains .gitkeep file then it won't be pushed 
