@@ -5,6 +5,7 @@ import uploadOnCloudinary  from '../utils/cloudinary.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { error } from 'console';
 import jwt from "jsonwebtoken"
+import { subscribe } from 'diagnostics_channel';
 
 const generateAccessAndRefreshToken = async(userId) => {
     const user = await User.findById(userId)
@@ -276,6 +277,128 @@ const updateUserCoverImg = asyncHandler(async(req , res) => {
     .json(new ApiResponse(200, user, "Cover Img Updated Successfully"))
 })
 
+const getUserChannelProfile = asyncHandler( async(req, res) => {
+    const {username} = req.params;
 
+    if(!username?.trim()){
+        throw new ApiError(400, "Username is required")
+    }
 
-export { registerUser, loginUser, logOut,refreshAccessToken, changePassword, updateAccountDetails, updateUserAvatar, updateUserCoverImg}
+    // We are using aggregation here to get - learn about it in detail for mongoose and mongodb
+    const channel = await User.aggregate([
+        {
+            $match: {
+                username: username?.toLowerCase()
+            }
+        },
+        // Getting our subscribers 
+        {
+            $lookup: {
+                from: "subscriptions",
+                localField: "_id",
+                foreignField: "channel",
+                as: "subscribers"
+            }
+        },
+        // Getting the channels we r subscribed to
+        {
+            $lookup: {
+                from: "subscriptions",
+                localField: "_id",
+                foreignField: "subscriber",
+                as: "subscribedTo"
+            }
+        },
+        {
+            $addFields: {
+                subscriberCount: {
+                    $size: "$subscribers"
+                },
+                channelSubscribedToCount: {
+                    $size: "$subscribedTo"
+                },
+                isSubscribed: {
+                    $cond: {
+                        if: {$in: [req.user?._id, "$subscribers.subscriber"]},
+                        then: true,
+                        else: false,
+                    }
+                }
+            }
+        },
+        {
+            // Only required value will be shared by keeping 1
+            $project: {
+                fullname: 1,
+                isSubscribed: 1,
+                avatar: 1,
+                coverImg: 1,
+                username: 1,
+                subscriberCount: 1,
+                channelSubscribedToCount: 1,
+                email: 1,
+            }
+        }
+    ])
+    if(!channel?.length){
+        throw new ApiError(404, "Channel not found")
+    }
+    // TO know which data type aggregrate return 
+    console.log(channel)
+
+    return res
+    .status(200)
+    .json(new ApiResponse(200, channel[0], "Channel profile fetched successfully"))
+})
+
+const getWatchHistory = asyncHandler( async(req, res) => {
+    // When we do req.user._id we get it in string because of mongoose but in db it is stored as objectId so we need to convert it to ObjectId to match it with the data in db
+    const user = await User.aggregate([
+        {
+            $match: {
+                _id: new mongoose.Types.ObjectId(req.user._id) // Ensure type matches MongoDB's ObjectId when querying by _id
+            }
+        },
+        {
+        $lookup: {
+            from: "videos",
+            localField: "watchHistory",
+            foreignField: "_id",
+            as: "watchHistory",
+            pipeline: [
+                {
+                    $lookup: {
+                        from: "users",
+                        localField: "owner",
+                        foreignField: "_id",
+                        as: "owner",
+                        pipeline: [
+                            {
+                                $project: {
+                                    username: 1,
+                                    avatar: 1
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    //This is used to seend the array in a good way - sending the first field either by using Array[0]
+                    $addFields: {
+                        owner: {
+                            $first: "$owner"
+                        }
+                    }
+                }
+            ]
+        }
+                
+        }
+    ]);
+    return res
+    .status(200)
+    .json(new ApiResponse(200, user[0]?.watchHistory , "Watch history fetched successfully"))
+}
+);
+
+export { registerUser, loginUser, logOut,refreshAccessToken, changePassword, updateAccountDetails, updateUserAvatar, updateUserCoverImg, getWatchHistory, getCurrentUser, getUserChannelProfile }
